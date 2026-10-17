@@ -1,4 +1,7 @@
+import math
+
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 
 st.set_page_config(page_title="معالم الأردن", page_icon="🏛️", layout="wide")
@@ -177,3 +180,90 @@ with col_map:
         st.info("ما في نتائج مطابقة.")
     else:
         st.map(filtered[["lat", "lon"]], zoom=6)
+
+
+# ---------- مخطط الرحلة ----------
+def distance_km(a, b):
+    """المسافة التقريبية بخط مستقيم بين نقطتين (كم)."""
+    r = 6371
+    p1, p2 = math.radians(a["lat"]), math.radians(b["lat"])
+    dphi = p2 - p1
+    dlon = math.radians(b["lon"] - a["lon"])
+    h = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlon / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(h))
+
+
+def order_route(start, others):
+    """نبدأ من نقطة البداية وكل مرة نروح لأقرب مكان باقي."""
+    route = [start]
+    remaining = others[:]
+    while remaining:
+        nxt = min(remaining, key=lambda s: distance_km(route[-1], s))
+        remaining.remove(nxt)
+        route.append(nxt)
+    return route
+
+
+st.divider()
+st.header("🧭 خطّط رحلتك")
+st.caption("اختر الأماكن اللي تبي تزورها، وبنرتبها لك بمسار مناسب")
+
+names = st.multiselect(
+    "اختر من 2 إلى 8 أماكن", df["name"].tolist(), max_selections=8, key="trip"
+)
+
+if len(names) < 2:
+    st.info("اختر مكانين على الأقل عشان نرسم لك المسار.")
+else:
+    start_name = st.selectbox("نقطة البداية", names)
+    chosen = [s for s in LANDMARKS if s["name"] in names]
+    start = next(s for s in chosen if s["name"] == start_name)
+    others = [s for s in chosen if s["name"] != start_name]
+    route = order_route(start, others)
+
+    legs = [distance_km(route[i], route[i + 1]) for i in range(len(route) - 1)]
+    total = sum(legs)
+    road_km = total * 1.3  # تقدير تقريبي للمسافة بالسيارة
+    hours = road_km / 60
+
+    st.subheader("ترتيب الزيارة")
+    for i, stop in enumerate(route):
+        line = f"**{i + 1}. {stop['name']}** ({stop['city']})"
+        if i > 0:
+            line += f"  ·  حوالي {legs[i - 1]:.0f} كم من المحطة السابقة"
+        st.markdown(line)
+
+    c1, c2 = st.columns(2)
+    c1.metric("المسافة بخط مستقيم", f"{total:.0f} كم")
+    c2.metric("تقدير بالسيارة", f"{road_km:.0f} كم · {hours:.1f} ساعة")
+    st.caption("الأرقام تقريبية. المسافة الفعلية والوقت يعتمدون على الطرق والزحمة.")
+
+    # الخريطة
+    stops_df = pd.DataFrame(route)
+    path_df = pd.DataFrame({"path": [[[s["lon"], s["lat"]] for s in route]]})
+    span = max(stops_df["lat"].max() - stops_df["lat"].min(),
+               stops_df["lon"].max() - stops_df["lon"].min())
+    zoom = 9 if span < 0.3 else 8 if span < 0.8 else 7 if span < 1.5 else 6
+    st.pydeck_chart(
+        pdk.Deck(
+            layers=[
+                pdk.Layer("PathLayer", path_df, get_path="path",
+                          get_width=60, width_min_pixels=3,
+                          get_color=[217, 142, 95]),
+                pdk.Layer("ScatterplotLayer", stops_df,
+                          get_position="[lon, lat]", get_radius=2500,
+                          radius_min_pixels=7, get_fill_color=[27, 35, 64]),
+            ],
+            initial_view_state=pdk.ViewState(
+                latitude=float(stops_df["lat"].mean()),
+                longitude=float(stops_df["lon"].mean()),
+                zoom=zoom,
+            ),
+        )
+    )
+
+    # فتح المسار في خرائط Google
+    gmaps_url = "https://www.google.com/maps/dir/" + "/".join(
+        f"{s['lat']},{s['lon']}" for s in route
+    )
+    st.link_button("افتح المسار في خرائط Google 🗺️", gmaps_url)
