@@ -1,5 +1,7 @@
+import json
 import math
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
+from urllib.request import Request, urlopen
 
 import pandas as pd
 import pydeck as pdk
@@ -201,6 +203,45 @@ LANDMARKS = [
 
 df = pd.DataFrame(LANDMARKS)
 
+
+def street_view_url(lat, lon):
+    """رابط يفتح جولة Street View (360°) عند الإحداثيات."""
+    return f"https://www.google.com/maps/@?api=1&map_action=pano&viewpoint={lat},{lon}"
+
+
+def maps_search_url(name, city):
+    return "https://www.google.com/maps/search/?api=1&query=" + quote_plus(
+        f"{name} {city} الأردن"
+    )
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def wiki_photo(name):
+    """يجيب صورة المعلم من ويكيبيديا العربية، ويرجع None لو ما لقى."""
+    try:
+        params = urlencode({
+            "action": "query", "format": "json", "generator": "search",
+            "gsrsearch": f"{name} الأردن", "gsrlimit": 1,
+            "prop": "pageimages|info", "piprop": "thumbnail",
+            "pithumbsize": 800, "inprop": "url",
+        })
+        req = Request(
+            "https://ar.wikipedia.org/w/api.php?" + params,
+            headers={"User-Agent": "JordanLandmarksApp/1.0"},
+        )
+        with urlopen(req, timeout=6) as resp:
+            data = json.load(resp)
+        pages = data.get("query", {}).get("pages", {})
+        if not pages:
+            return None
+        page = next(iter(pages.values()))
+        thumb = page.get("thumbnail", {}).get("source")
+        if not thumb:
+            return None
+        return {"image": thumb, "page": page.get("fullurl"), "title": page.get("title")}
+    except Exception:
+        return None
+
 # ---------- الواجهة ----------
 st.title("🏛️ معالم الأردن")
 st.caption("تعرّف على أجمل الأماكن الأثرية والطبيعية في الأردن")
@@ -229,10 +270,10 @@ with col_list:
         with st.expander(f"{row['name']}  ·  {row['city']}"):
             st.write(row["desc"])
             st.write(f"**النوع:** {row['type']}")
-            maps_url = "https://www.google.com/maps/search/?api=1&query=" + quote_plus(
-                f"{row['name']} {row['city']} الأردن"
-            )
-            st.link_button("افتح في خرائط Google 🗺️", maps_url)
+            st.link_button("جولة 360° (Street View) 🌐",
+                           street_view_url(row["lat"], row["lon"]))
+            st.link_button("افتح في خرائط Google 🗺️",
+                           maps_search_url(row["name"], row["city"]))
 
 with col_map:
     if filtered.empty:
@@ -326,3 +367,38 @@ else:
         f"{s['lat']},{s['lon']}" for s in route
     )
     st.link_button("افتح المسار في خرائط Google 🗺️", gmaps_url)
+
+
+# ---------- جولة بالصور ----------
+st.divider()
+st.header("📸 جولة بالصور")
+st.caption("اختر مدينة وتجوّل بين معالمها معلماً بعد معلم")
+
+tour_city = st.selectbox("اختر المدينة", sorted(df["city"].unique()), key="tour_city")
+tour_stops = [s for s in LANDMARKS if s["city"] == tour_city]
+
+if st.session_state.get("tour_city_prev") != tour_city:
+    st.session_state["tour_i"] = 0
+    st.session_state["tour_city_prev"] = tour_city
+tour_i = max(0, min(st.session_state.get("tour_i", 0), len(tour_stops) - 1))
+
+c_prev, c_count, c_next = st.columns([1, 1, 1])
+if c_prev.button("◀ السابق", disabled=tour_i == 0, key="tour_prev"):
+    st.session_state["tour_i"] = tour_i - 1
+    st.rerun()
+if c_next.button("التالي ▶", disabled=tour_i >= len(tour_stops) - 1, key="tour_next"):
+    st.session_state["tour_i"] = tour_i + 1
+    st.rerun()
+c_count.markdown(f"**{tour_i + 1} / {len(tour_stops)}**")
+
+stop = tour_stops[tour_i]
+st.subheader(stop["name"])
+photo = wiki_photo(stop["name"])
+if photo:
+    st.image(photo["image"])
+    st.caption(f"الصورة من ويكيبيديا: [{photo['title']}]({photo['page']})")
+else:
+    st.info("ما لقينا صورة لهذا المعلم، جرّب جولة Street View.")
+st.write(stop["desc"])
+st.link_button("جولة 360° (Street View) 🌐", street_view_url(stop["lat"], stop["lon"]))
+st.link_button("افتح في خرائط Google 🗺️", maps_search_url(stop["name"], stop["city"]))
