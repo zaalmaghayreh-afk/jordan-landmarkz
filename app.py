@@ -1,4 +1,5 @@
 import math
+from urllib.parse import quote_plus
 
 import pandas as pd
 import pydeck as pdk
@@ -228,6 +229,10 @@ with col_list:
         with st.expander(f"{row['name']}  ·  {row['city']}"):
             st.write(row["desc"])
             st.write(f"**النوع:** {row['type']}")
+            maps_url = "https://www.google.com/maps/search/?api=1&query=" + quote_plus(
+                f"{row['name']} {row['city']} الأردن"
+            )
+            st.link_button("افتح في خرائط Google 🗺️", maps_url)
 
 with col_map:
     if filtered.empty:
