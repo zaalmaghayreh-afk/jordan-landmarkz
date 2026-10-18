@@ -1,11 +1,14 @@
 import json
 import math
+from collections import Counter
+from pathlib import Path
 from urllib.parse import quote_plus, urlencode
 from urllib.request import Request, urlopen
 
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="معالم الأردن", page_icon="🏛️", layout="wide")
 
@@ -402,3 +405,20 @@ else:
 st.write(stop["desc"])
 st.link_button("جولة 360° (Street View) 🌐", street_view_url(stop["lat"], stop["lon"]))
 st.link_button("افتح في خرائط Google 🗺️", maps_search_url(stop["name"], stop["city"]))
+
+
+# ---------- لعبة القيادة ----------
+st.divider()
+st.header("🏎️ لعبة القيادة بين المعالم الأثرية")
+st.caption("سوق السيارة وزر المعالم الأثرية لتجمعها وتقرأ معلوماتها. "
+           "بالأسهم أو WASD على الكمبيوتر، أو بأزرار الشاشة على الجوال.")
+
+arch_all = [s for s in LANDMARKS if s["type"] == "أثري"]
+counts = Counter(s["city"] for s in arch_all)
+regions = ["الأردن كله"] + sorted(c for c, n in counts.items() if n >= 2)
+region = st.selectbox("اختر المنطقة", regions, key="game_region")
+arch = arch_all if region == "الأردن كله" else [s for s in arch_all if s["city"] == region]
+
+game_html = (Path(__file__).parent / "game.html").read_text(encoding="utf-8")
+game_html = game_html.replace("__LANDMARKS__", json.dumps(arch, ensure_ascii=False))
+components.html(game_html, height=580)

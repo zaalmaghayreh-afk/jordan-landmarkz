@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #1B2340; overflow: hidden;
+               font-family: Tahoma, Arial, sans-serif; }
+  #wrap { position: relative; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: absolute; top: 10px; right: 10px; color: #FAF1DE; font-size: 14px;
+         background: rgba(15,20,40,.7); padding: 8px 12px; border-radius: 10px; line-height: 1.7; }
+  #card { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+          width: min(80%, 420px); background: #FAF1DE; color: #1B2340; display: none;
+          border-radius: 14px; padding: 12px 16px; font-size: 14px; line-height: 1.6;
+          box-shadow: 0 6px 20px rgba(0,0,0,.4); z-index: 5; }
+  #card b { font-size: 16px; }
+  #card { max-height: 45%; overflow: auto; }
+  .pad { position: absolute; bottom: 14px; display: flex; gap: 10px; direction: ltr; }
+  #steer { left: 14px; } #pedals { right: 14px; }
+  .pad button { width: 62px; height: 62px; border-radius: 50%; border: 2px solid #FAF1DE;
+                background: rgba(27,35,64,.65); color: #FAF1DE; font-size: 22px;
+                touch-action: none; user-select: none; -webkit-user-select: none; }
+  #start { position: absolute; inset: 0; background: rgba(15,20,40,.78); color: #FAF1DE;
+           display: flex; flex-direction: column; align-items: center; justify-content: center;
+           font-size: 26px; cursor: pointer; z-index: 10; text-align: center; gap: 8px; }
+  #start small { font-size: 14px; opacity: .85; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="hud">المواقع: <b id="n">0</b> / <span id="total">0</span><br>
+    الأقرب: <span id="near">-</span><br>⏱ <span id="t">0:00</span></div>
+  <div id="card"></div>
+  <div class="pad" id="steer"><button data-k="left">◀</button><button data-k="right">▶</button></div>
+  <div class="pad" id="pedals"><button data-k="down">▼</button><button data-k="up">▲</button></div>
+  <div id="start">🏎️ اضغط للبدء
+    <small>الأسهم أو WASD للقيادة · أو أزرار الشاشة</small>
+    <small>زر كل المعالم الأثرية لتجمعها</small></div>
+</div>
+<script type="application/json" id="data">__LANDMARKS__</script>
+<script>
+// بيانات تجريبية تُستخدم فقط لو فتحت الملف مباشرة بدون التطبيق
+const DEMO = [
+  {name: "البتراء", city: "معان", lat: 30.3285, lon: 35.4444, desc: "المدينة الوردية المنحوتة في الصخر."},
+  {name: "جرش", city: "جرش", lat: 32.2747, lon: 35.8961, desc: "من أفضل المدن الرومانية المحفوظة."},
+  {name: "أم قيس", city: "إربد", lat: 32.6537, lon: 35.6817, desc: "مدينة جدارا القديمة."},
+  {name: "قلعة الكرك", city: "الكرك", lat: 31.1803, lon: 35.7016, desc: "قلعة صليبية ضخمة."},
+  {name: "قصر عمرة", city: "الزرقاء", lat: 31.8023, lon: 36.5859, desc: "قصر أموي بلوحات جدارية."},
+];
+let STOPS = [];
+try { STOPS = JSON.parse(document.getElementById('data').textContent); } catch (e) { STOPS = DEMO; }
+if (!STOPS.length) STOPS = DEMO;
+
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = canvas.clientWidth; H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize); resize();
+
+// ---- تحويل الإحداثيات الحقيقية إلى عالم اللعبة ----
+const lat0 = STOPS.reduce((a, s) => a + s.lat, 0) / STOPS.length;
+const KX = 111.32 * Math.cos(lat0 * Math.PI / 180), KY = 110.57;
+const kx = s => s.lon * KX, ky = s => -s.lat * KY;
+let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+STOPS.forEach(s => {
+  minX = Math.min(minX, kx(s)); maxX = Math.max(maxX, kx(s));
+  minY = Math.min(minY, ky(s)); maxY = Math.max(maxY, ky(s));
+});
+const ext = Math.max(maxX - minX, maxY - minY, 1);
+const K = Math.min(150, Math.max(10, 4000 / ext));   // بكسل لكل كيلومتر
+const PAD = 500;
+const WW = (maxX - minX) * K + 2 * PAD, WH = (maxY - minY) * K + 2 * PAD;
+// دمج المعالم المتقاربة جداً في موقع واحد حتى لا تتداخل على الشاشة
+const SITES = [];
+STOPS.forEach(s => {
+  const x = (kx(s) - minX) * K + PAD, y = (ky(s) - minY) * K + PAD;
+  const g = SITES.find(g => Math.hypot(g.x - x, g.y - y) < 100);
+  if (g) g.members.push(s); else SITES.push({ x, y, members: [s], done: false });
+});
+SITES.forEach(g => {
+  const first = g.members[0];
+  g.name = first.name + (g.members.length > 1 ? ' وما حولها' : '');
+  g.city = first.city;
+});
+
+const car = { x: WW / 2, y: WH / 2, a: -Math.PI / 2, v: 0 };
+let collected = 0, started = false, t0 = 0, finished = false, cardTimer = null;
+document.getElementById('total').textContent = SITES.length;
+
+// ---- التحكم ----
+const keys = { up: false, down: false, left: false, right: false };
+const keyMap = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
+                 ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
+addEventListener('keydown', e => { const k = keyMap[e.code]; if (k) { keys[k] = true; e.preventDefault(); } });
+addEventListener('keyup', e => { const k = keyMap[e.code]; if (k) { keys[k] = false; e.preventDefault(); } });
+document.querySelectorAll('[data-k]').forEach(b => {
+  const k = b.dataset.k;
+  b.addEventListener('pointerdown', e => { keys[k] = true; e.preventDefault(); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(t =>
+    b.addEventListener(t, e => { keys[k] = false; e.preventDefault(); }));
+});
+document.getElementById('start').addEventListener('click', function () {
+  this.style.display = 'none'; started = true; t0 = performance.now(); window.focus();
+});
+
+function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+function showCard(html, ms) {
+  const c = document.getElementById('card');
+  c.innerHTML = html; c.style.display = 'block';
+  clearTimeout(cardTimer); cardTimer = setTimeout(() => { c.style.display = 'none'; }, ms);
+}
+function fmt(sec) { sec = Math.floor(sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+
+// ---- الفيزياء ----
+function update(dt) {
+  const MAXV = 260, ACC = 260, BRK = 380, FRIC = 1.1;
+  if (keys.up) car.v += ACC * dt; else if (keys.down) car.v -= BRK * dt; else car.v -= car.v * FRIC * dt;
+  car.v = Math.max(-MAXV * 0.4, Math.min(MAXV, car.v));
+  const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+  car.a += steer * 3.0 * dt * Math.max(-1, Math.min(1, car.v / 120));
+  car.x += Math.cos(car.a) * car.v * dt; car.y += Math.sin(car.a) * car.v * dt;
+  const m = 60;
+  if (car.x < m || car.x > WW - m || car.y < m || car.y > WH - m) {
+    car.x = Math.max(m, Math.min(WW - m, car.x)); car.y = Math.max(m, Math.min(WH - m, car.y)); car.v *= 0.6;
+  }
+  for (const s of SITES) {
+    if (!s.done && Math.hypot(s.x - car.x, s.y - car.y) < 70) {
+      s.done = true; collected++;
+      document.getElementById('n').textContent = collected;
+      if (collected === SITES.length) {
+        finished = true;
+        showCard('<b>🎉 أحسنت!</b><br>زرت كل المعالم في ' + fmt((performance.now() - t0) / 1000), 12000);
+      } else {
+        const list = s.members.slice(0, 4).map(m => '• <b>' + esc(m.name) + '</b>: ' + esc(m.desc)).join('<br>');
+        const more = s.members.length > 4 ? '<br>… و' + (s.members.length - 4) + ' معالم أخرى' : '';
+        showCard('<b>' + esc(s.name) + '</b> · ' + esc(s.city) + '<br>' + list + more, 8000);
+      }
+    }
+  }
+}
+
+// ---- الرسم ----
+function hash(x, y) {
+  let h = (x * 374761393 + y * 668265263) | 0;
+  h = (h ^ (h >>> 13)) * 1274126177 | 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+function nearest() {
+  let best = null, bd = Infinity;
+  for (const s of SITES) if (!s.done) { const d = Math.hypot(s.x - car.x, s.y - car.y); if (d < bd) { bd = d; best = s; } }
+  return best ? { s: best, d: bd } : null;
+}
+function draw() {
+  const cx = car.x - W / 2, cy = car.y - H / 2;
+  ctx.fillStyle = '#1B2340'; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-cx, -cy, WW, WH); ctx.clip();
+  ctx.fillStyle = '#E7CBA0'; ctx.fillRect(-cx, -cy, WW, WH);
+  const CELL = 110;
+  for (let gy = Math.floor(cy / CELL) - 1; gy <= Math.floor((cy + H) / CELL) + 1; gy++) {
+    for (let gx = Math.floor(cx / CELL) - 1; gx <= Math.floor((cx + W) / CELL) + 1; gx++) {
+      const h = hash(gx, gy);
+      const px = gx * CELL + hash(gy, gx) * CELL - cx, py = gy * CELL + hash(gx + 7, gy + 3) * CELL - cy;
+      if (h < 0.25) { ctx.fillStyle = '#D9B684'; ctx.beginPath(); ctx.ellipse(px, py, 30 + h * 80, 14 + h * 30, 0, 0, 6.283); ctx.fill(); }
+      else if (h < 0.35) { ctx.fillStyle = '#A9754F'; ctx.beginPath(); ctx.arc(px, py, 6 + h * 20, 0, 6.283); ctx.fill(); }
+    }
+  }
+  ctx.restore();
+
+  // المعالم
+  ctx.textAlign = 'center';
+  for (const s of SITES) {
+    const sx = s.x - cx, sy = s.y - cy;
+    if (sx < -120 || sx > W + 120 || sy < -80 || sy > H + 80) continue;
+    ctx.fillStyle = s.done ? '#9a9a9a' : '#F6E3B4'; ctx.strokeStyle = '#D98E5F'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(sx, sy, 26, 0, 6.283); ctx.fill(); ctx.stroke();
+    ctx.font = '26px sans-serif'; ctx.fillStyle = '#1B2340';
+    ctx.fillText(s.done ? '✅' : '🏛️', sx, sy + 9);
+    ctx.font = 'bold 14px Tahoma, Arial'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,.9)';
+    ctx.strokeText(s.name, sx, sy + 48); ctx.fillStyle = '#3a2a1a'; ctx.fillText(s.name, sx, sy + 48);
+  }
+
+  // السيارة
+  ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(car.a);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(-20, -9, 44, 24);
+  ctx.fillStyle = '#D93F3F'; ctx.fillRect(-22, -12, 44, 24);
+  ctx.fillStyle = '#1B2340'; ctx.fillRect(2, -9, 10, 18);
+  ctx.fillStyle = '#FFE08A'; ctx.fillRect(20, -10, 3, 5); ctx.fillRect(20, 5, 3, 5);
+  ctx.restore();
+
+  // سهم يدل على أقرب معلم
+  const nr = nearest();
+  if (nr) {
+    const ang = Math.atan2(nr.s.y - car.y, nr.s.x - car.x);
+    ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(ang);
+    ctx.fillStyle = '#FFD166'; ctx.strokeStyle = '#1B2340'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(78, 0); ctx.lineTo(60, -9); ctx.lineTo(60, 9); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    document.getElementById('near').textContent = nr.s.name + ' (' + (nr.d / K).toFixed(1) + ' كم)';
+  } else document.getElementById('near').textContent = '—';
+
+  // الخريطة الصغيرة
+  const ms = Math.min(130 / WW, 110 / WH), mw = WW * ms, mh = WH * ms;
+  ctx.fillStyle = 'rgba(15,20,40,.75)'; ctx.fillRect(10, 10, mw, mh);
+  for (const s of SITES) { ctx.fillStyle = s.done ? '#888' : '#FFD166'; ctx.fillRect(10 + s.x * ms - 2, 10 + s.y * ms - 2, 4, 4); }
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(10 + car.x * ms, 10 + car.y * ms, 3, 0, 6.283); ctx.fill();
+}
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (started) update(dt);
+  if (started && !finished) document.getElementById('t').textContent = fmt((now - t0) / 1000);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
