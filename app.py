@@ -12,6 +12,45 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="معالم الأردن", page_icon="🏛️", layout="wide")
 
+
+# ---------- التصميم ----------
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
+:root { --navy:#1B2340; --sand:#E7CBA0; --cream:#FAF1DE; --clay:#D98E5F; --clay-dark:#A9532A; }
+h1, h2, h3, h4, h5, p, li, label, .stMarkdown, .stCaption, [data-testid="stMetricValue"],
+[data-testid="stExpander"] summary p, .stButton button p, [data-testid="stLinkButton"] p {
+  font-family: 'Tajawal', 'Cairo', sans-serif;
+}
+.stMarkdown, .stCaption, label, [data-testid="stExpander"] summary { direction: rtl; text-align: right; }
+.block-container { padding-top: 1.6rem; max-width: 1100px; }
+[data-testid="stToolbar"], #MainMenu, footer { display: none !important; }
+[data-testid="stSidebar"] { background: var(--cream); }
+h2 { color: var(--navy); font-weight: 800; border-right: 6px solid var(--clay);
+     padding-right: 12px; margin-top: .4rem; }
+[data-testid="stExpander"] { border: 1px solid var(--sand); border-radius: 14px; background: #fff;
+     box-shadow: 0 2px 8px rgba(27,35,64,.06); margin-bottom: 8px; }
+[data-testid="stLinkButton"] a, [data-testid^="stBaseLinkButton"], .stButton > button {
+  border-radius: 999px; border: 1.5px solid var(--clay); color: var(--navy); font-weight: 700; }
+[data-testid="stLinkButton"] a:hover, .stButton > button:hover { background: var(--cream); border-color: var(--clay-dark); }
+[data-testid="stMetric"] { background: var(--cream); border-radius: 14px; padding: 10px 14px; }
+.hero { display: flex; align-items: center; gap: 22px; direction: rtl; margin-bottom: 18px;
+        background: linear-gradient(135deg, #1B2340 0%, #2B3862 100%);
+        border-radius: 20px; padding: 22px 28px; }
+.hero svg { flex: none; width: 110px; height: 110px; }
+.hero h1 { color: var(--cream) !important; font-size: 2.5rem; font-weight: 800; margin: 0; padding: 0; }
+.hero p { color: var(--cream) !important; margin: 6px 0 12px; opacity: .92; }
+.hero .chips span { display: inline-block; background: rgba(250,241,222,.14); color: var(--cream);
+        border-radius: 999px; padding: 4px 14px; margin: 0 0 6px 8px; font-size: .85rem; }
+@media (max-width: 640px) {
+  .hero { flex-direction: column; text-align: center; padding: 18px; }
+  .hero svg { width: 84px; height: 84px; }
+  .hero h1 { font-size: 1.9rem; }
+}
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
 # ---------- البيانات (لاحقاً ننقلها لملف JSON أو قاعدة بيانات) ----------
 LANDMARKS = [
     {"name": "البتراء", "city": "معان", "type": "أثري",
@@ -246,8 +285,24 @@ def wiki_photo(name):
         return None
 
 # ---------- الواجهة ----------
-st.title("🏛️ معالم الأردن")
-st.caption("تعرّف على أجمل الأماكن الأثرية والطبيعية في الأردن")
+HERO = (
+    '<div class="hero">'
+    '<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="قوس حجري وشمس">'
+    '<path d="M 20 100 V 50 A 40 40 0 0 1 100 50 V 100 Z" fill="#D98E5F"/>'
+    '<path d="M 36 100 V 55 A 24 24 0 0 1 84 55 V 100 Z" fill="#0F1428"/>'
+    '<circle cx="60" cy="62" r="11" fill="#F6E3B4"/>'
+    '<path d="M 36 90 L 60 80 L 84 90 V 100 H 36 Z" fill="#8F4F31"/>'
+    '<rect x="10" y="100" width="100" height="5" rx="2.5" fill="#F0C98F"/>'
+    '</svg>'
+    '<div><h1>معالم الأردن</h1>'
+    '<p>دليلك لأجمل الأماكن الأثرية والطبيعية والتراثية في المملكة</p>'
+    '<div class="chips">'
+    f'<span>🏛️ {len(LANDMARKS)} معلم</span>'
+    f'<span>📍 {df["city"].nunique()} مدينة</span>'
+    '<span>🧭 مخطط رحلات</span><span>🏎️ لعبة قيادة</span>'
+    '</div></div></div>'
+)
+st.markdown(HERO, unsafe_allow_html=True)
 
 # الفلاتر في الشريط الجانبي
 with st.sidebar:
@@ -419,6 +474,9 @@ regions = ["الأردن كله"] + sorted(c for c, n in counts.items() if n >= 
 region = st.selectbox("اختر المنطقة", regions, key="game_region")
 arch = arch_all if region == "الأردن كله" else [s for s in arch_all if s["city"] == region]
 
-game_html = (Path(__file__).parent / "game.html").read_text(encoding="utf-8")
+mode = st.radio("نسخة اللعبة", ["ثلاثية الأبعاد 🧊", "ثنائية الأبعاد 🗺️"],
+                horizontal=True, key="game_mode")
+game_file = "game3d.html" if mode.startswith("ثلاثية") else "game.html"
+game_html = (Path(__file__).parent / game_file).read_text(encoding="utf-8")
 game_html = game_html.replace("__LANDMARKS__", json.dumps(arch, ensure_ascii=False))
 components.html(game_html, height=580)
