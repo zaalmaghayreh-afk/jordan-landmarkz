@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #9ed3ff; overflow: hidden;
+               font-family: Tahoma, Arial, sans-serif; }
+  #wrap { position: relative; width: 100%; height: 100%; }
+  canvas#c { display: block; width: 100%; height: 100%; }
+  #mini { position: absolute; top: 10px; left: 10px; border-radius: 6px; }
+  #hud { position: absolute; top: 10px; right: 10px; color: #FAF1DE; font-size: 14px;
+         background: rgba(15,20,40,.7); padding: 8px 12px; border-radius: 10px; line-height: 1.7; }
+  #card { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+          width: min(80%, 420px); max-height: 45%; overflow: auto; background: #FAF1DE; color: #1B2340;
+          display: none; border-radius: 14px; padding: 12px 16px; font-size: 14px; line-height: 1.6;
+          box-shadow: 0 6px 20px rgba(0,0,0,.4); z-index: 5; }
+  #card b { font-size: 16px; }
+  .pad { position: absolute; bottom: 14px; display: flex; gap: 10px; direction: ltr; }
+  #steer { left: 14px; } #pedals { right: 14px; }
+  .pad button { width: 62px; height: 62px; border-radius: 50%; border: 2px solid #FAF1DE;
+                background: rgba(27,35,64,.65); color: #FAF1DE; font-size: 22px;
+                touch-action: none; user-select: none; -webkit-user-select: none; }
+  #start { position: absolute; inset: 0; background: rgba(15,20,40,.78); color: #FAF1DE;
+           display: flex; flex-direction: column; align-items: center; justify-content: center;
+           font-size: 26px; cursor: pointer; z-index: 10; text-align: center; gap: 8px; }
+  #start small { font-size: 14px; opacity: .85; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <canvas id="mini"></canvas>
+  <div id="hud">المواقع: <b id="n">0</b> / <span id="total">0</span><br>
+    الأقرب: <span id="near">-</span><br>⏱ <span id="t">0:00</span></div>
+  <div id="card"></div>
+  <div class="pad" id="steer"><button data-k="left">◀</button><button data-k="right">▶</button></div>
+  <div class="pad" id="pedals"><button data-k="down">▼</button><button data-k="up">▲</button></div>
+  <div id="start">🏎️ اضغط للبدء
+    <small>الأسهم أو WASD للقيادة · أو أزرار الشاشة</small>
+    <small>اتبع الأعمدة الذهبية والسهم الأصفر</small></div>
+</div>
+<script type="application/json" id="data">__LANDMARKS__</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const DEMO = [
+  {name: "البتراء", city: "معان", lat: 30.3285, lon: 35.4444, desc: "المدينة الوردية المنحوتة في الصخر."},
+  {name: "جرش", city: "جرش", lat: 32.2747, lon: 35.8961, desc: "من أفضل المدن الرومانية المحفوظة."},
+  {name: "أم قيس", city: "إربد", lat: 32.6537, lon: 35.6817, desc: "مدينة جدارا القديمة."},
+  {name: "قلعة الكرك", city: "الكرك", lat: 31.1803, lon: 35.7016, desc: "قلعة صليبية ضخمة."},
+  {name: "قصر عمرة", city: "الزرقاء", lat: 31.8023, lon: 36.5859, desc: "قصر أموي بلوحات جدارية."},
+];
+let STOPS = [];
+try { STOPS = JSON.parse(document.getElementById('data').textContent); } catch (e) { STOPS = DEMO; }
+if (!STOPS.length) STOPS = DEMO;
+
+function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+function fmt(sec) { sec = Math.floor(sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+
+function init() {
+  const canvas = document.getElementById('c');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#9ed3ff');
+  scene.fog = new THREE.Fog('#cfe7ff', 60, 260);
+  const camera = new THREE.PerspectiveCamera(65, 1, 0.5, 600);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xb39b7a, 0.95));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.7); sun.position.set(50, 80, 30); scene.add(sun);
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize); resize();
+
+  // ---- العالم: الإحداثيات الحقيقية -> وحدات اللعبة ----
+  const lat0 = STOPS.reduce((a, s) => a + s.lat, 0) / STOPS.length;
+  const KX = 111.32 * Math.cos(lat0 * Math.PI / 180), KY = 110.57;
+  const kx = s => s.lon * KX, ky = s => -s.lat * KY;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  STOPS.forEach(s => { minX = Math.min(minX, kx(s)); maxX = Math.max(maxX, kx(s)); minY = Math.min(minY, ky(s)); maxY = Math.max(maxY, ky(s)); });
+  const ext = Math.max(maxX - minX, maxY - minY, 1);
+  const K = Math.min(15, Math.max(1, 400 / ext));            // وحدة لكل كيلومتر
+  const PAD = 50;
+  const WW = (maxX - minX) * K + 2 * PAD, WH = (maxY - minY) * K + 2 * PAD;
+  const SITES = [];
+  STOPS.forEach(s => {
+    const x = (kx(s) - minX) * K + PAD, z = (ky(s) - minY) * K + PAD;
+    const g = SITES.find(g => Math.hypot(g.x - x, g.z - z) < 10);
+    if (g) g.members.push(s); else SITES.push({ x, z, members: [s], done: false });
+  });
+  SITES.forEach(g => { g.name = g.members[0].name + (g.members.length > 1 ? ' وما حولها' : ''); g.city = g.members[0].city; });
+  document.getElementById('total').textContent = SITES.length;
+
+  // ---- الأرض والمناظر ----
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(WW, WH), new THREE.MeshLambertMaterial({ color: '#E7CBA0' }));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(WW / 2, 0, WH / 2); scene.add(ground);
+  const outer = new THREE.Mesh(new THREE.PlaneGeometry(WW + 900, WH + 900), new THREE.MeshLambertMaterial({ color: '#c9a878' }));
+  outer.rotation.x = -Math.PI / 2; outer.position.set(WW / 2, -0.05, WH / 2); scene.add(outer);
+  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const dummy = new THREE.Object3D();
+  function scatter(geo, color, n, sx, sy, yBase) {
+    const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color }), n);
+    let i = 0, tries = 0;
+    while (i < n && tries++ < n * 5) {
+      const x = 8 + rnd() * (WW - 16), z = 8 + rnd() * (WH - 16);
+      if (SITES.some(s => Math.hypot(s.x - x, s.z - z) < 10)) continue;
+      const k = sx[0] + rnd() * (sx[1] - sx[0]);
+      dummy.position.set(x, yBase * k, z); dummy.rotation.y = rnd() * 6.28;
+      dummy.scale.set(k, sy * k * (0.6 + rnd() * 0.6), k); dummy.updateMatrix(); mesh.setMatrixAt(i++, dummy.matrix);
+    }
+    mesh.count = i; scene.add(mesh);
+  }
+  scatter(new THREE.DodecahedronGeometry(1), '#A9754F', 450, [0.5, 2.2], 0.6, 0.3);
+  scatter(new THREE.SphereGeometry(1, 8, 6), '#D9B684', 140, [4, 14], 0.18, 0);
+  const mtn = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 7), new THREE.MeshLambertMaterial({ color: '#8a6a4f' }), 90);
+  for (let i = 0; i < 90; i++) {
+    const t = rnd() * 2 * (WW + WH), off = 60 + rnd() * 50, r = 18 + rnd() * 30, h = 14 + rnd() * 26;
+    let x, z;
+    if (t < WW) { x = t; z = -off; } else if (t < WW + WH) { x = WW + off; z = t - WW; }
+    else if (t < 2 * WW + WH) { x = t - WW - WH; z = WH + off; } else { x = -off; z = t - 2 * WW - WH; }
+    dummy.position.set(x, h / 2, z); dummy.rotation.y = 0; dummy.scale.set(r, h, r); dummy.updateMatrix(); mtn.setMatrixAt(i, dummy.matrix);
+  }
+  scene.add(mtn);
+
+  // ---- المعالم (أعمدة ذهبية + شعاع ضوء + اسم) ----
+  function label(text) {
+    const c = document.createElement('canvas'); c.width = 512; c.height = 128;
+    const g = c.getContext('2d'); g.textAlign = 'center'; g.font = 'bold 52px Tahoma, Arial';
+    g.lineWidth = 8; g.strokeStyle = 'rgba(255,255,255,.95)'; g.strokeText(text, 256, 82);
+    g.fillStyle = '#3a2a1a'; g.fillText(text, 256, 82);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true }));
+    sp.scale.set(12, 3, 1); return sp;
+  }
+  SITES.forEach(s => {
+    const grp = new THREE.Group(); grp.position.set(s.x, 0, s.z);
+    s.mat = new THREE.MeshLambertMaterial({ color: '#F6D58E' });
+    [-1.7, 1.7].forEach(dx => { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 4.4, 10), s.mat); c.position.set(dx, 2.2, 0); grp.add(c); });
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.8, 1.4), s.mat); lintel.position.y = 4.8; grp.add(lintel);
+    s.ring = new THREE.Mesh(new THREE.TorusGeometry(5, 0.25, 8, 40), new THREE.MeshBasicMaterial({ color: '#FFD166' }));
+    s.ring.rotation.x = Math.PI / 2; s.ring.position.y = 0.2; grp.add(s.ring);
+    s.beam = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 70, 8), new THREE.MeshBasicMaterial({ color: '#FFD166', transparent: true, opacity: 0.35 }));
+    s.beam.position.y = 35; grp.add(s.beam);
+    const lb = label(s.name); lb.position.y = 8.5; grp.add(lb);
+    scene.add(grp);
+  });
+
+  // ---- السيارة ----
+  const carG = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.9, 2.2), new THREE.MeshLambertMaterial({ color: '#D93F3F' })); body.position.y = 0.9; carG.add(body);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 1.9), new THREE.MeshLambertMaterial({ color: '#1B2340' })); cabin.position.set(-0.3, 1.7, 0); carG.add(cabin);
+  [0.9].forEach(() => [-1, 1].forEach(sz => { const l = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.3, 0.5), new THREE.MeshBasicMaterial({ color: '#FFE08A' })); l.position.set(2.25, 1, sz * 0.7); carG.add(l); }));
+  const wheels = [];
+  [[1.4, 1.1], [1.4, -1.1], [-1.4, 1.1], [-1.4, -1.1]].forEach(([wx, wz]) => {
+    const geo = new THREE.CylinderGeometry(0.5, 0.5, 0.4, 14); geo.rotateX(Math.PI / 2);
+    const w = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: '#222' })); w.position.set(wx, 0.5, wz); carG.add(w); wheels.push(w);
+  });
+  scene.add(carG);
+  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.6, 2.2, 8), new THREE.MeshBasicMaterial({ color: '#FFD166' }));
+  arrow.geometry.rotateZ(-Math.PI / 2); scene.add(arrow);
+
+  const car = { x: WW / 2, z: WH / 2, a: -Math.PI / 2, v: 0 };
+  const cam = { x: car.x, z: car.z + 13 };
+  let collected = 0, started = false, t0 = 0, finished = false, cardTimer = null;
+
+  // ---- التحكم ----
+  const keys = { up: false, down: false, left: false, right: false };
+  const keyMap = { ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right' };
+  addEventListener('keydown', e => { const k = keyMap[e.code]; if (k) { keys[k] = true; e.preventDefault(); } });
+  addEventListener('keyup', e => { const k = keyMap[e.code]; if (k) { keys[k] = false; e.preventDefault(); } });
+  document.querySelectorAll('[data-k]').forEach(b => {
+    const k = b.dataset.k;
+    b.addEventListener('pointerdown', e => { keys[k] = true; e.preventDefault(); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => b.addEventListener(t, e => { keys[k] = false; e.preventDefault(); }));
+  });
+  document.getElementById('start').addEventListener('click', function () { this.style.display = 'none'; started = true; t0 = performance.now(); window.focus(); });
+  function showCard(html, ms) {
+    const c = document.getElementById('card'); c.innerHTML = html; c.style.display = 'block';
+    clearTimeout(cardTimer); cardTimer = setTimeout(() => { c.style.display = 'none'; }, ms);
+  }
+
+  function update(dt) {
+    const MAXV = 26, ACC = 26, BRK = 38, FRIC = 1.1;
+    if (keys.up) car.v += ACC * dt; else if (keys.down) car.v -= BRK * dt; else car.v -= car.v * FRIC * dt;
+    car.v = Math.max(-MAXV * 0.4, Math.min(MAXV, car.v));
+    const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    car.a += steer * 3.0 * dt * Math.max(-1, Math.min(1, car.v / 12));
+    car.x += Math.cos(car.a) * car.v * dt; car.z += Math.sin(car.a) * car.v * dt;
+    const m = 6;
+    if (car.x < m || car.x > WW - m || car.z < m || car.z > WH - m) {
+      car.x = Math.max(m, Math.min(WW - m, car.x)); car.z = Math.max(m, Math.min(WH - m, car.z)); car.v *= 0.6;
+    }
+    for (const s of SITES) {
+      if (!s.done && Math.hypot(s.x - car.x, s.z - car.z) < 7) {
+        s.done = true; collected++; s.mat.color.set('#9a9a9a'); s.ring.material.color.set('#9a9a9a'); s.beam.visible = false;
+        document.getElementById('n').textContent = collected;
+        if (collected === SITES.length) {
+          finished = true; showCard('<b>🎉 أحسنت!</b><br>زرت كل المعالم في ' + fmt((performance.now() - t0) / 1000), 12000);
+        } else {
+          const list = s.members.slice(0, 4).map(mm => '• <b>' + esc(mm.name) + '</b>: ' + esc(mm.desc)).join('<br>');
+          const more = s.members.length > 4 ? '<br>… و' + (s.members.length - 4) + ' معالم أخرى' : '';
+          showCard('<b>' + esc(s.name) + '</b> · ' + esc(s.city) + '<br>' + list + more, 8000);
+        }
+      }
+    }
+    wheels.forEach(w => { w.rotation.z -= car.v * dt / 0.5; });
+  }
+
+  function nearest() {
+    let best = null, bd = Infinity;
+    for (const s of SITES) if (!s.done) { const d = Math.hypot(s.x - car.x, s.z - car.z); if (d < bd) { bd = d; best = s; } }
+    return best ? { s: best, d: bd } : null;
+  }
+
+  const mini = document.getElementById('mini'), mctx = mini.getContext('2d');
+  const ms = Math.min(130 / WW, 110 / WH); mini.width = Math.ceil(WW * ms); mini.height = Math.ceil(WH * ms);
+  function drawMini() {
+    mctx.fillStyle = 'rgba(15,20,40,.75)'; mctx.fillRect(0, 0, mini.width, mini.height);
+    for (const s of SITES) { mctx.fillStyle = s.done ? '#888' : '#FFD166'; mctx.fillRect(s.x * ms - 2, s.z * ms - 2, 4, 4); }
+    mctx.fillStyle = '#fff'; mctx.beginPath(); mctx.arc(car.x * ms, car.z * ms, 3, 0, 6.283); mctx.fill();
+  }
+
+  function render(dt, now) {
+    carG.position.set(car.x, 0, car.z); carG.rotation.y = -car.a;
+    const dx = Math.cos(car.a), dz = Math.sin(car.a), k = 1 - Math.exp(-5 * dt);
+    cam.x += (car.x - dx * 13 - cam.x) * k; cam.z += (car.z - dz * 13 - cam.z) * k;
+    camera.position.set(cam.x, 6.5, cam.z); camera.lookAt(car.x + dx * 5, 1.2, car.z + dz * 5);
+    const nr = nearest();
+    if (nr) {
+      arrow.visible = true; arrow.position.set(car.x, 4.6, car.z);
+      arrow.rotation.y = -Math.atan2(nr.s.z - car.z, nr.s.x - car.x);
+      document.getElementById('near').textContent = nr.s.name + ' (' + (nr.d / K).toFixed(1) + ' كم)';
+    } else { arrow.visible = false; document.getElementById('near').textContent = '—'; }
+    if (started && !finished) document.getElementById('t').textContent = fmt((now - t0) / 1000);
+    drawMini(); renderer.render(scene, camera);
+  }
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (started) update(dt);
+    render(dt, now);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  window.__game = { SITES, car, keys, update, nearest, get collected() { return collected; }, setStarted(v) { started = v; t0 = 0; } };
+}
+
+if (typeof THREE === 'undefined') {
+  const st = document.getElementById('start');
+  st.innerHTML = '⚠️ تعذّر تحميل مكتبة الرسوم ثلاثية الأبعاد<small>تحقق من الاتصال بالإنترنت وأعد المحاولة، أو جرّب النسخة ثنائية الأبعاد</small>';
+  st.style.cursor = 'default';
+} else {
+  try { init(); } catch (e) {
+    const st = document.getElementById('start');
+    st.innerHTML = '⚠️ المتصفح لا يدعم الرسوم ثلاثية الأبعاد<small>جرّب النسخة ثنائية الأبعاد</small>';
+    st.style.cursor = 'default';
+  }
+}
+</script>
+</body>
+</html>
