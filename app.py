@@ -1,5 +1,7 @@
 import json
 import math
+import random
+import re
 from datetime import date
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -72,6 +74,9 @@ button[data-baseweb="tab"] p { font-weight: 600; font-size: 1rem; }
 .t-arch { --c: #D9A08C; --k: #3A1F16; } .t-nat { --c: #B9C97A; --k: #1F2A12; }
 .t-rel { --c: #7FB7C4; --k: #0B2F3A; }  .t-her { --c: #E3B75B; --k: #3A2A06; }
 .t-cul { --c: #9DB0D0; --k: #16233D; }  .t-tou { --c: #E58A82; --k: #4A1410; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; direction: rtl; margin: 4px 0 10px; }
+.legend span { display: flex; align-items: center; gap: 6px; font-size: .88rem; }
+.legend i { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--ink); display: inline-block; }
 .grid.today { grid-template-columns: minmax(260px, 400px); }
 @media (max-width: 640px) {
   .hero { padding: 24px 20px 40px; } .hero h1 { font-size: 2.4rem; } .hero svg { width: 84px; left: 14px; }
@@ -106,7 +111,7 @@ if LANG == "en":
     {direction:ltr !important;text-align:left !important}.hero svg{left:auto !important;right:30px}</style>""",
                 unsafe_allow_html=True)
 
-UI_EN = {'ابحث بالاسم، مثل: البتراء أو قلعة': 'Search by name, e.g. Petra or Castle', 'ابحث عن معلم': 'Search for a landmark', 'المدينة': 'City', 'النوع': 'Type', 'ما لقينا معلم بهذا الاسم. جرّب كلمة أقصر أو غيّر المدينة والنوع.': 'No landmark found. Try a shorter word or change the city and type.', 'عرض المزيد': 'Show more', 'اعرض النتائج على الخريطة': 'Show results on the map', 'اختر مدينة وتجوّل بين معالمها معلماً بعد معلم': 'Pick a city and browse its landmarks one by one', 'اختر المدينة': 'Choose a city', '◀ السابق': '◀ Previous', 'التالي ▶': 'Next ▶', 'ما لقينا صورة لهذا المعلم، جرّب جولة Street View.': 'No photo found for this landmark. Try the Street View tour.', 'جولة 360° (Street View) 🌐': '360° tour (Street View) 🌐', 'افتح في خرائط Google 🗺️': 'Open in Google Maps 🗺️', 'اختر الأماكن اللي تبي تزورها، وبنرتبها لك بمسار مناسب': "Pick the places you want to visit and we'll order them into a route", 'اختر من 2 إلى 8 أماكن': 'Choose 2 to 8 places', 'اختر مكانين على الأقل عشان نرسم لك المسار.': 'Choose at least two places to draw your route.', 'نقطة البداية': 'Starting point', 'ترتيب الزيارة': 'Visit order', 'المسافة بخط مستقيم': 'Straight-line distance', 'تقدير بالسيارة': 'Estimated by car', 'الأرقام تقريبية. المسافة الفعلية والوقت يعتمدون على الطرق والزحمة.': 'Figures are approximate. Real distance and time depend on roads and traffic.', 'افتح المسار في خرائط Google 🗺️': 'Open the route in Google Maps 🗺️', 'اختر المنطقة': 'Choose a region', 'نسخة اللعبة': 'Game version', 'كل المدن': 'All cities', 'الأردن كله': 'All of Jordan', 'ثلاثية الأبعاد 🧊': '3D 🧊', 'ثنائية الأبعاد 🗺️': '2D 🗺️', 'استكشف': 'Explore', 'جولة بالصور': 'Photo tour', 'خطّط رحلتك': 'Plan your trip', 'لعبة القيادة': 'Driving game', 'سوق السيارة وزر المعالم الأثرية لتجمعها وتقرأ معلوماتها. بالأسهم أو WASD على الكمبيوتر، أو بأزرار الشاشة على الجوال.': 'Drive the car and visit the archaeological sites to collect them and read about them. Use the arrow keys or WASD on a computer, or the on-screen buttons on a phone.'}
+UI_EN = {'الخريطة': 'Map', 'اختبر نفسك': 'Quiz', 'ابحث بالاسم، مثل: البتراء أو قلعة': 'Search by name, e.g. Petra or Castle', 'ابحث عن معلم': 'Search for a landmark', 'المدينة': 'City', 'النوع': 'Type', 'ما لقينا معلم بهذا الاسم. جرّب كلمة أقصر أو غيّر المدينة والنوع.': 'No landmark found. Try a shorter word or change the city and type.', 'عرض المزيد': 'Show more', 'اعرض النتائج على الخريطة': 'Show results on the map', 'اختر مدينة وتجوّل بين معالمها معلماً بعد معلم': 'Pick a city and browse its landmarks one by one', 'اختر المدينة': 'Choose a city', '◀ السابق': '◀ Previous', 'التالي ▶': 'Next ▶', 'ما لقينا صورة لهذا المعلم، جرّب جولة Street View.': 'No photo found for this landmark. Try the Street View tour.', 'جولة 360° (Street View) 🌐': '360° tour (Street View) 🌐', 'افتح في خرائط Google 🗺️': 'Open in Google Maps 🗺️', 'اختر الأماكن اللي تبي تزورها، وبنرتبها لك بمسار مناسب': "Pick the places you want to visit and we'll order them into a route", 'اختر من 2 إلى 8 أماكن': 'Choose 2 to 8 places', 'اختر مكانين على الأقل عشان نرسم لك المسار.': 'Choose at least two places to draw your route.', 'نقطة البداية': 'Starting point', 'ترتيب الزيارة': 'Visit order', 'المسافة بخط مستقيم': 'Straight-line distance', 'تقدير بالسيارة': 'Estimated by car', 'الأرقام تقريبية. المسافة الفعلية والوقت يعتمدون على الطرق والزحمة.': 'Figures are approximate. Real distance and time depend on roads and traffic.', 'افتح المسار في خرائط Google 🗺️': 'Open the route in Google Maps 🗺️', 'اختر المنطقة': 'Choose a region', 'نسخة اللعبة': 'Game version', 'كل المدن': 'All cities', 'الأردن كله': 'All of Jordan', 'ثلاثية الأبعاد 🧊': '3D 🧊', 'ثنائية الأبعاد 🗺️': '2D 🗺️', 'استكشف': 'Explore', 'جولة بالصور': 'Photo tour', 'خطّط رحلتك': 'Plan your trip', 'لعبة القيادة': 'Driving game', 'سوق السيارة وزر المعالم الأثرية لتجمعها وتقرأ معلوماتها. بالأسهم أو WASD على الكمبيوتر، أو بأزرار الشاشة على الجوال.': 'Drive the car and visit the archaeological sites to collect them and read about them. Use the arrow keys or WASD on a computer, or the on-screen buttons on a phone.'}
 
 
 def tr(text):
@@ -461,6 +466,70 @@ def card_html(row, photo, wx=None):
     )
 
 
+TYPE_RGB = {"أثري": (217, 160, 140), "طبيعي": (185, 201, 122), "ديني": (127, 183, 196),
+            "تراثي": (227, 183, 91), "ثقافي": (157, 176, 208), "سياحي": (229, 138, 130)}
+
+
+def landmark_map(d):
+    """خريطة تفاعلية: نقطة ملونة لكل نوع، واسم المعلم يظهر عند التمرير."""
+    if d.empty:
+        st.info(L("ما في معالم للعرض.", "No landmarks to show."))
+        return
+    pts = d[["lon", "lat", "name", "city", "type"]].copy()
+    pts["color"] = pts["type"].map(lambda t: list(TYPE_RGB.get(t, (200, 200, 200))))
+    pts["kind"] = pts["type"].map(tr_type)
+    present = set(d["type"])
+    legend = "".join(f'<span><i style="background:rgb{TYPE_RGB[t]}"></i>{escape(tr_type(t))}</span>'
+                     for t in TYPE_RGB if t in present)
+    st.markdown(f'<div class="legend">{legend}</div>', unsafe_allow_html=True)
+    span = max(d["lat"].max() - d["lat"].min(), d["lon"].max() - d["lon"].min())
+    zoom = 9 if span < 0.3 else 8 if span < 0.8 else 7 if span < 1.5 else 6
+    st.pydeck_chart(pdk.Deck(
+        layers=[pdk.Layer("ScatterplotLayer", pts, get_position="[lon, lat]", get_fill_color="color",
+                          get_line_color=[27, 35, 64], stroked=True, line_width_min_pixels=2,
+                          get_radius=9, radius_units="pixels", pickable=True)],
+        initial_view_state=pdk.ViewState(latitude=float(d["lat"].mean()), longitude=float(d["lon"].mean()), zoom=zoom),
+        tooltip={"html": "<b>{name}</b><br/>{city} · {kind}", "style": {"direction": "rtl"}}))
+
+
+def _words(t):
+    return {w for w in re.findall(r"\w+", t) if len(w) >= 4}
+
+
+def make_quiz(n=10):
+    """يبني أسئلة اختيار من متعدد من قائمة المعالم نفسها."""
+    cities = sorted({x["city"] for x in LANDMARKS})
+    qs = []
+    for s in random.sample(LANDMARKS, len(LANDMARKS)):
+        kind = random.choice(["city", "name", "desc"])
+        if kind == "city":
+            if s["city"] in s["name"]:
+                continue  # الاسم نفسه يكشف الجواب
+            wrong = random.sample([c for c in cities if c != s["city"]], 3)
+            q = L(f"في أي محافظة يقع «{s['name']}»؟", f"Which governorate is {s['name']} in?")
+            ans = s["city"]
+        elif kind == "name":
+            wrong = [x["name"] for x in random.sample([x for x in LANDMARKS if x["city"] != s["city"]], 3)]
+            q = L(f"أي من هذه المعالم يقع في {s['city']}؟", f"Which of these is in {s['city']}?")
+            ans = s["name"]
+        else:
+            if s["name"] in s["desc"] or len(s["desc"]) < 20:
+                continue
+            pool = [x for x in LANDMARKS if x["city"] != s["city"]
+                    and len(_words(s["desc"]) & _words(x["desc"])) <= 1]
+            if len(pool) < 3:
+                continue
+            wrong = [x["name"] for x in random.sample(pool, 3)]
+            q = s["desc"] + L("\n\nما اسم هذا المعلم؟", "\n\nWhich landmark is this?")
+            ans = s["name"]
+        opts = wrong + [ans]
+        random.shuffle(opts)
+        qs.append({"q": q, "opts": opts, "a": opts.index(ans), "note": f"{s['name']} · {s['city']}: {s['desc']}"})
+        if len(qs) == n:
+            break
+    return qs
+
+
 # ---------- مخطط الرحلة ----------
 def distance_km(a, b):
     """المسافة التقريبية بخط مستقيم بين نقطتين (كم)."""
@@ -496,8 +565,8 @@ HERO = (
 )
 st.markdown(HERO, unsafe_allow_html=True)
 
-tab_explore, tab_tour, tab_trip, tab_game = st.tabs(
-    [tr(x) for x in ["استكشف", "جولة بالصور", "خطّط رحلتك", "لعبة القيادة"]])
+tab_explore, tab_map, tab_tour, tab_trip, tab_game, tab_quiz = st.tabs(
+    [tr(x) for x in ["استكشف", "الخريطة", "جولة بالصور", "خطّط رحلتك", "لعبة القيادة", "اختبر نفسك"]])
 
 PAGE = 9
 with tab_explore:
@@ -538,7 +607,12 @@ with tab_explore:
             st.session_state["explore_shown"] = shown + PAGE
             st.rerun()
         with st.expander(tr("اعرض النتائج على الخريطة")):
-            st.map(filtered[["lat", "lon"]], zoom=6)
+            landmark_map(filtered)
+
+with tab_map:
+    map_sel = st.pills(tr("النوع"), sorted(df["type"].unique()), selection_mode="multi",
+                       format_func=tr_type, key="map_types")
+    landmark_map(df[df["type"].isin(map_sel)] if map_sel else df)
 
 with tab_tour:
     st.caption(tr("اختر مدينة وتجوّل بين معالمها معلماً بعد معلم"))
@@ -663,12 +737,66 @@ with tab_game:
     mode = st.radio(tr("نسخة اللعبة"), ["ثلاثية الأبعاد 🧊", "ثنائية الأبعاد 🗺️"],
                     horizontal=True, key="game_mode", format_func=tr)
     game_file = "game3d.html" if mode.startswith("ثلاثية") else "game.html"
-    game_html = (Path(__file__).parent / game_file).read_text(encoding="utf-8")
-    game_html = game_html.replace("__LANDMARKS__", json.dumps(arch, ensure_ascii=False))
-    if LANG == "en":
-        for _ar, _en_t in [("اضغط للبدء", "Tap to start"), ("الأسهم أو WASD للقيادة · أو أزرار الشاشة", "Arrow keys / WASD, or the on-screen buttons"),
-                       ("زر كل المعالم الأثرية لتجمعها", "Visit every archaeological site"), ("اتبع الأعمدة الذهبية والسهم الأصفر", "Follow the golden pillars and the yellow arrow"),
-                       ("المواقع:", "Sites:"), ("الأقرب:", "Nearest:"), (" كم)", " km)"), ("<b>🎉 أحسنت!</b><br>زرت كل المعالم في ", "<b>🎉 Well done!</b><br>You visited every site in "),
-                       (" وما حولها", " & nearby"), ("<br>… و'", "<br>… and '"), (" معالم أخرى", " more"), ('dir="rtl"', 'dir="ltr"')]:
-            game_html = game_html.replace(_ar, _en_t)
-    components.html(game_html, height=580)
+    game_html = None
+    for _f in (game_file, "game.html"):
+        _p = Path(__file__).parent / _f
+        if _p.exists():
+            game_html = _p.read_text(encoding="utf-8")
+            break
+    if game_html is None:
+        st.warning(L(f"ملف اللعبة ({game_file}) غير موجود. ارفعه على GitHub بجانب app.py.",
+                     f"The game file ({game_file}) is missing. Upload it to GitHub next to app.py."))
+    else:
+        game_html = game_html.replace("__LANDMARKS__", json.dumps(arch, ensure_ascii=False))
+        if LANG == "en":
+            for _ar, _en_t in [("اضغط للبدء", "Tap to start"), ("الأسهم أو WASD للقيادة · أو أزرار الشاشة", "Arrow keys / WASD, or the on-screen buttons"),
+                           ("زر كل المعالم الأثرية لتجمعها", "Visit every archaeological site"), ("اتبع الأعمدة الذهبية والسهم الأصفر", "Follow the golden pillars and the yellow arrow"),
+                           ("المواقع:", "Sites:"), ("الأقرب:", "Nearest:"), (" كم)", " km)"), ("<b>🎉 أحسنت!</b><br>زرت كل المعالم في ", "<b>🎉 Well done!</b><br>You visited every site in "),
+                           (" وما حولها", " & nearby"), ("<br>… و'", "<br>… and '"), (" معالم أخرى", " more"), ('dir="rtl"', 'dir="ltr"')]:
+                game_html = game_html.replace(_ar, _en_t)
+        components.html(game_html, height=580)
+
+with tab_quiz:
+    st.caption(L("اختبر معلوماتك عن الأردن: 10 أسئلة من معالم التطبيق.",
+                 "Test what you know about Jordan: 10 questions from the app's landmarks."))
+    qz = st.session_state.get("quiz")
+    if not qz:
+        if st.button(L("ابدأ الاختبار", "Start the quiz"), key="quiz_start"):
+            st.session_state["quiz"] = {"qs": make_quiz(), "i": 0, "score": 0, "answered": False, "choice": None}
+            st.rerun()
+    elif qz["i"] >= len(qz["qs"]):
+        total_q, score = len(qz["qs"]), qz["score"]
+        tiers = [(9, "مرشد سياحي محترف 🏆", "Pro tour guide 🏆"), (7, "خبير بمعالم الأردن 🌟", "Jordan expert 🌟"),
+                 (4, "سائح متمرّس 🧭", "Seasoned traveller 🧭"), (0, "بداية حلوة، كمّل الاستكشاف 🌱", "Nice start, keep exploring 🌱")]
+        tier = next(t for t in tiers if score >= t[0])
+        st.subheader(f"{score} / {total_q}")
+        st.success(L(tier[1], tier[2]))
+        msg = L(f"جبت {score} من {total_q} في اختبار معالم الأردن! جرّب أنت: ",
+                f"I scored {score}/{total_q} on the Jordan landmarks quiz! Try it: ") + APP_URL
+        st.link_button(L("شارك نتيجتك على واتساب 💬", "Share your score on WhatsApp 💬"),
+                       "https://wa.me/?text=" + quote_plus(msg))
+        if st.button(L("اختبار جديد", "New quiz"), key="quiz_again"):
+            st.session_state["quiz"] = None
+            st.rerun()
+    else:
+        i, q = qz["i"], qz["qs"][qz["i"]]
+        st.progress(i / len(qz["qs"]))
+        st.markdown(f"**{L('السؤال', 'Question')} {i + 1} / {len(qz['qs'])}**")
+        st.write(q["q"])
+        correct = q["opts"][q["a"]]
+        if not qz["answered"]:
+            pick = st.radio("answer", q["opts"], index=None, key=f"qz_{i}", label_visibility="collapsed")
+            if st.button(L("تأكيد", "Check"), key=f"qz_ok_{i}", disabled=pick is None):
+                qz["answered"], qz["choice"] = True, pick
+                qz["score"] += int(pick == correct)
+                st.rerun()
+        else:
+            if qz["choice"] == correct:
+                st.success(L("إجابة صحيحة ✅", "Correct ✅"))
+            else:
+                st.error(L(f"إجابتك غير صحيحة. الصحيح: {correct}", f"Not quite. The answer: {correct}"))
+            st.caption(q["note"])
+            if st.button(L("التالي ▶", "Next ▶"), key=f"qz_next_{i}"):
+                qz["i"] += 1
+                qz["answered"] = False
+                st.rerun()
