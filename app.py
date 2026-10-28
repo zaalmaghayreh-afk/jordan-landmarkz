@@ -470,26 +470,50 @@ TYPE_RGB = {"أثري": (217, 160, 140), "طبيعي": (185, 201, 122), "دين�
             "تراثي": (227, 183, 91), "ثقافي": (157, 176, 208), "سياحي": (229, 138, 130)}
 
 
-def landmark_map(d):
-    """خريطة تفاعلية: نقطة ملونة لكل نوع، واسم المعلم يظهر عند التمرير."""
+def landmark_map(d, key="map"):
+    """خريطة تفاعلية: نقاط ملونة بهالة، اسم المعلم عند التمرير، وبطاقته عند الضغط."""
     if d.empty:
         st.info(L("ما في معالم للعرض.", "No landmarks to show."))
         return
     pts = d[["lon", "lat", "name", "city", "type"]].copy()
     pts["color"] = pts["type"].map(lambda t: list(TYPE_RGB.get(t, (200, 200, 200))))
+    pts["halo"] = pts["color"].map(lambda c: c + [70])
     pts["kind"] = pts["type"].map(tr_type)
     present = set(d["type"])
     legend = "".join(f'<span><i style="background:rgb{TYPE_RGB[t]}"></i>{escape(tr_type(t))}</span>'
                      for t in TYPE_RGB if t in present)
     st.markdown(f'<div class="legend">{legend}</div>', unsafe_allow_html=True)
+    st.caption(L("مرّر على أي نقطة لتشوف اسم المعلم، واضغط عليها لتظهر بطاقته تحت الخريطة.",
+                 "Hover a point for its name, and tap it to see the landmark card below the map."))
     span = max(d["lat"].max() - d["lat"].min(), d["lon"].max() - d["lon"].min())
     zoom = 9 if span < 0.3 else 8 if span < 0.8 else 7 if span < 1.5 else 6
-    st.pydeck_chart(pdk.Deck(
-        layers=[pdk.Layer("ScatterplotLayer", pts, get_position="[lon, lat]", get_fill_color="color",
-                          get_line_color=[27, 35, 64], stroked=True, line_width_min_pixels=2,
-                          get_radius=9, radius_units="pixels", pickable=True)],
+    halo = pdk.Layer("ScatterplotLayer", pts, id="halo", get_position="[lon, lat]", get_fill_color="halo",
+                     get_radius=19, radius_units="pixels", pickable=False)
+    dots = pdk.Layer("ScatterplotLayer", pts, id="landmarks", get_position="[lon, lat]", get_fill_color="color",
+                     get_line_color=[27, 35, 64], stroked=True, line_width_min_pixels=2,
+                     get_radius=10, radius_units="pixels", pickable=True, auto_highlight=True)
+    deck = pdk.Deck(
+        layers=[halo, dots],
         initial_view_state=pdk.ViewState(latitude=float(d["lat"].mean()), longitude=float(d["lon"].mean()), zoom=zoom),
-        tooltip={"html": "<b>{name}</b><br/>{city} · {kind}", "style": {"direction": "rtl"}}))
+        map_provider="carto", map_style="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+        tooltip={"html": "<b>{name}</b><br/>{city} · {kind}", "style": {"direction": "rtl"}})
+    try:
+        event = st.pydeck_chart(deck, on_select="rerun", selection_mode="single-object", key=key)
+    except TypeError:  # نسخة Streamlit قديمة بدون اختيار النقاط
+        st.pydeck_chart(deck)
+        event = None
+    picked = None
+    try:
+        objs = event.selection["objects"].get("landmarks") if event else None
+        picked = objs[0].get("name") if objs else None
+    except Exception:
+        picked = None
+    row = d[d["name"] == picked] if picked else d.iloc[0:0]
+    if not row.empty:
+        r = row.iloc[0]
+        st.markdown('<div class="grid today">' + card_html(
+            r, wiki_photo(r["orig"]), weather_batch(((r["lat"], r["lon"]),))[0]) + '</div>',
+            unsafe_allow_html=True)
 
 
 def _words(t):
@@ -607,12 +631,12 @@ with tab_explore:
             st.session_state["explore_shown"] = shown + PAGE
             st.rerun()
         with st.expander(tr("اعرض النتائج على الخريطة")):
-            landmark_map(filtered)
+            landmark_map(filtered, "map_explore")
 
 with tab_map:
     map_sel = st.pills(tr("النوع"), sorted(df["type"].unique()), selection_mode="multi",
                        format_func=tr_type, key="map_types")
-    landmark_map(df[df["type"].isin(map_sel)] if map_sel else df)
+    landmark_map(df[df["type"].isin(map_sel)] if map_sel else df, "map_main")
 
 with tab_tour:
     st.caption(tr("اختر مدينة وتجوّل بين معالمها معلماً بعد معلم"))
